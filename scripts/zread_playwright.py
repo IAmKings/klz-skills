@@ -20,6 +20,10 @@ if TYPE_CHECKING:
     from playwright.sync_api._generated import Page, Playwright, Browser
 
 
+# =============================================================================
+# Core Browser Management
+# =============================================================================
+
 class ZreadPlaywrightScraper:
     def __init__(self, output_dir: str = "archive", headless: bool = True):
         self.output_dir = Path(__file__).parent.parent / output_dir
@@ -60,6 +64,11 @@ class ZreadPlaywrightScraper:
             base_url = f"https://zread.ai/{author}/{project}"
             return base_url, project_name, page_id, slug
         return url, "unknown-project", 1, ""
+
+
+# =============================================================================
+# Navigation & Discovery
+# =============================================================================
 
     def navigate_to_project(self, base_url: str) -> bool:
         """导航到项目首页，并等待页面加载完成"""
@@ -114,8 +123,9 @@ class ZreadPlaywrightScraper:
                 self.page.wait_for_timeout(3000)  # 增加等待时间
                 return self.page.content()
         except Exception:
+            # 点击导航失败时静默，回退到直接 goto 方案
             pass
-        
+
         # 备用方案：直接使用 goto
         try:
             url = f"{self.base_url}/{page_id}"
@@ -125,6 +135,11 @@ class ZreadPlaywrightScraper:
         except Exception as e:
             print(f"  导航失败: {e}")
             return None
+
+
+# =============================================================================
+# Content Parsing
+# =============================================================================
 
     def _extract_page_title(self, soup: BeautifulSoup, page_id: int) -> str:
         h1 = soup.find("h1")
@@ -166,6 +181,11 @@ class ZreadPlaywrightScraper:
                 code_blocks.append(code.strip())
         result["code_blocks"] = code_blocks
         return result
+
+
+# =============================================================================
+# Output & File Saving
+# =============================================================================
 
     def save_markdown(self, project: str, page_id: int, data: dict, url: str) -> Path:
         md_dir = self.output_dir / project / "docs"
@@ -230,6 +250,11 @@ class ZreadPlaywrightScraper:
 
         print(f"\n完整索引已保存: {index_file}")
         print(f"Markdown 索引: {md_index_file}")
+
+
+# =============================================================================
+# Scraping Methods (Project & Single Page)
+# =============================================================================
 
     def scrape_project(self, base_url: str, delay: float = 1.0) -> bool:
         """抓取整个项目的所有页面"""
@@ -318,6 +343,10 @@ class ZreadPlaywrightScraper:
         print("=" * 70)
         return True
 
+
+# =============================================================================
+# CLI Entry Point
+# =============================================================================
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Zread.ai 文档抓取脚本 (Playwright 版本)")
