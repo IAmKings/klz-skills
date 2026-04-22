@@ -111,7 +111,7 @@ class ZreadPlaywrightScraper:
             link = self.page.get_by_role('link', name=re.compile(f"^{re.escape(link_text)}$", re.IGNORECASE)).first
             if link and link.is_visible():
                 link.click()
-                self.page.wait_for_timeout(2000)
+                self.page.wait_for_timeout(3000)  # 增加等待时间
                 return self.page.content()
         except Exception:
             pass
@@ -120,7 +120,7 @@ class ZreadPlaywrightScraper:
         try:
             url = f"{self.base_url}/{page_id}"
             self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            self.page.wait_for_timeout(2000)
+            self.page.wait_for_timeout(3000)  # 增加等待时间
             return self.page.content()
         except Exception as e:
             print(f"  导航失败: {e}")
@@ -146,6 +146,9 @@ class ZreadPlaywrightScraper:
         for section in sections:
             section_title = section.get_text(strip=True)
             section_title = re.sub(r"\[#\]$", "", section_title).strip()
+            # 跳过空标题的 section
+            if not section_title:
+                continue
             section_id = section.get("id", "")
             content_list: List[str] = []
             next_elem = section.find_next_sibling()
