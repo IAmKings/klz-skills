@@ -4,44 +4,49 @@
 使用 Playwright 处理 SPA 动态内容，通过点击导航链接获取各页面完整数据。
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import re
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright, Page
+from playwright.sync_api import sync_playwright
+
+if TYPE_CHECKING:
+    from playwright.sync_api._generated import Page, Playwright, Browser
 
 
 class ZreadPlaywrightScraper:
     def __init__(self, output_dir: str = "archive", headless: bool = True):
         self.output_dir = Path(__file__).parent.parent / output_dir
         self.headless = headless
-        self.playwright = None
-        self.browser = None
-        self.page = None
-        self.base_url = None
-        self.project_name = None
+        self.playwright: Playwright | None = None
+        self.browser: Browser | None = None
+        self.page: Page | None = None
+        self.base_url: str | None = None
+        self.project_name: str | None = None
 
-    def _init_browser(self):
+    def _init_browser(self) -> None:
         if not self.playwright:
             self.playwright = sync_playwright().start()
             self.browser = self.playwright.chromium.launch(headless=self.headless)
             self.page = self.browser.new_page(user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-    def _close_browser(self):
+    def _close_browser(self) -> None:
         if self.browser:
             self.browser.close()
         if self.playwright:
             self.playwright.stop()
 
-    def __enter__(self):
+    def __enter__(self) -> "ZreadPlaywrightScraper":
         self._init_browser()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self._close_browser()
 
     def parse_url(self, url: str) -> Tuple[str, str, int, str]:
@@ -59,6 +64,8 @@ class ZreadPlaywrightScraper:
     def navigate_to_project(self, base_url: str) -> bool:
         """导航到项目首页，并等待页面加载完成"""
         self.base_url = base_url
+        if self.page is None:
+            return False
         try:
             self.page.goto(base_url, wait_until="domcontentloaded", timeout=30000)
             self.page.wait_for_timeout(3000)
@@ -67,16 +74,20 @@ class ZreadPlaywrightScraper:
             print(f"导航失败: {e}")
             return False
 
-    def discover_pages(self) -> Dict[int, Tuple[str, str]]:
+    def discover_pages(self) -> Dict[int, Tuple[str, str, str]]:
         """从侧边栏发现所有页面链接"""
-        pages = {}
+        pages: Dict[int, Tuple[str, str, str]] = {}
         print("正在发现页面...")
+
+        if self.page is None:
+            return pages
 
         # 获取所有导航链接
         links = self.page.query_selector_all('a[href]')
         for link in links:
             href = link.get_attribute('href')
-            text = link.text_content().strip()
+            text_content = link.text_content()
+            text = text_content.strip() if text_content else ""
             # 匹配 /author/project/1-slug 格式
             match = re.search(r"/([^/]+)/([^/]+)/(\d+)-([^/?]+)", str(href))
             if match:
@@ -92,6 +103,9 @@ class ZreadPlaywrightScraper:
 
     def navigate_to_page(self, page_id: int, link_text: str) -> Optional[str]:
         """通过点击导航链接导航到指定页面"""
+        if self.page is None:
+            return None
+
         try:
             # 尝试通过链接文本点击
             link = self.page.get_by_role('link', name=re.compile(f"^{re.escape(link_text)}$", re.IGNORECASE)).first
@@ -99,7 +113,7 @@ class ZreadPlaywrightScraper:
                 link.click()
                 self.page.wait_for_timeout(2000)
                 return self.page.content()
-        except:
+        except Exception:
             pass
         
         # 备用方案：直接使用 goto
@@ -126,22 +140,23 @@ class ZreadPlaywrightScraper:
     def parse_content(self, html: str) -> dict:
         soup = BeautifulSoup(html, "html.parser")
         title = self._extract_page_title(soup, 1)
-        result = {"title": title, "sections": []}
+        sections_list: List[dict] = []
+        result = {"title": title, "sections": sections_list}
         sections = soup.find_all("h2")
         for section in sections:
             section_title = section.get_text(strip=True)
             section_title = re.sub(r"\[#\]$", "", section_title).strip()
             section_id = section.get("id", "")
-            content = []
+            content_list: List[str] = []
             next_elem = section.find_next_sibling()
             while next_elem and next_elem.name != "h2":
                 if next_elem.name in ["p", "div", "ul", "ol", "table", "pre", "blockquote"]:
                     text = next_elem.get_text(strip=False)
                     if text.strip():
-                        content.append(text.strip())
+                        content_list.append(text.strip())
                 next_elem = next_elem.find_next_sibling()
-            result["sections"].append({"id": section_id, "title": section_title, "content": "\n\n".join(content)})
-        code_blocks = []
+            sections_list.append({"id": section_id, "title": section_title, "content": "\n\n".join(content_list)})
+        code_blocks: List[str] = []
         for pre in soup.find_all("pre"):
             code = pre.get_text(strip=False)
             if code.strip():
@@ -157,7 +172,7 @@ class ZreadPlaywrightScraper:
             slug = f"page-{page_id}"
         filename = f"{page_id:02d}-{slug}.md"
         filepath = md_dir / filename
-        md_content = [f"# {data['title']}", "", f"> 来源: {url}", f"> 抓取时间: {time.strftime('%Y-%m-%d %H:%M:%S')}", "", "---", ""]
+        md_content: List[str] = [f"# {data['title']}", "", f"> 来源: {url}", f"> 抓取时间: {time.strftime('%Y-%m-%d %H:%M:%S')}", "", "---", ""]
         for section in data["sections"]:
             if section["title"]:
                 md_content.append(f"## {section['title']}")
@@ -188,7 +203,7 @@ class ZreadPlaywrightScraper:
             json.dump(data, f, ensure_ascii=False, indent=2)
         return filepath
 
-    def generate_index(self, project: str, results: List[dict]):
+    def generate_index(self, project: str, results: List[dict]) -> None:
         index = {
             "project": project,
             "scraped_at": time.strftime('%Y-%m-%d %H:%M:%S'),
@@ -201,7 +216,7 @@ class ZreadPlaywrightScraper:
         with open(index_file, "w", encoding="utf-8") as f:
             json.dump(index, f, ensure_ascii=False, indent=2)
 
-        md_index = [f"# {project} - 完整文档索引", "", f"> 抓取时间: {time.strftime('%Y-%m-%d %H:%M:%S')}", f"> 共 {len(results)} 个文档页面", "", "## 文档目录", "", "| ID | 标题 | 状态 |", "|----|------|------|"]
+        md_index: List[str] = [f"# {project} - 完整文档索引", "", f"> 抓取时间: {time.strftime('%Y-%m-%d %H:%M:%S')}", f"> 共 {len(results)} 个文档页面", "", "## 文档目录", "", "| ID | 标题 | 状态 |", "|----|------|------|"]
         for r in sorted(results, key=lambda x: x["page_id"]):
             status = "✅" if r["status"] == "success" else "❌"
             md_index.append(f"| {r['page_id']} | {r['title']} | {status} |")
@@ -231,9 +246,10 @@ class ZreadPlaywrightScraper:
             print("❌ 未发现任何页面")
             return False
 
-        results = []
+        results: List[dict] = []
 
-        for idx, (page_id, (url, title, slug)) in enumerate(sorted(pages.items()), 1):
+        for idx, (page_id, page_info) in enumerate(sorted(pages.items()), 1):
+            url, title, slug = page_info
             print(f"[{idx:2d}/{len(pages)}] #{page_id}: {title} ", end="", flush=True)
 
             html = self.navigate_to_page(page_id, title)
@@ -260,7 +276,7 @@ class ZreadPlaywrightScraper:
         return True
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Zread.ai 文档抓取脚本 (Playwright 版本)")
     parser.add_argument("url", help="要抓取的 zread.ai 项目 URL")
     parser.add_argument("-o", "--output", type=str, default="archive", help="输出目录")
