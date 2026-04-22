@@ -278,16 +278,64 @@ class ZreadPlaywrightScraper:
         self.generate_index(project_name, results)
         return True
 
+    def scrape_single(self, url: str) -> bool:
+        """抓取单个页面"""
+        # 解析URL提取项目信息
+        match = re.search(r"zread\.ai/([^/]+)/([^/]+)/?(\d+)?(?:-[^/?]+)?", url)
+        if match:
+            author = match.group(1)
+            project = match.group(2)
+            page_id = int(match.group(3)) if match.group(3) else 1
+            project_name = f"{author}-{project}"
+        else:
+            project_name = "unknown-project"
+            page_id = 1
+
+        print(f"抓取单页: {url}")
+        print(f"项目: {project_name}")
+        print("=" * 70)
+
+        if self.page is None:
+            self._init_browser()
+
+        assert self.page is not None, "Browser page not initialized"
+
+        try:
+            self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            self.page.wait_for_timeout(3000)
+            html = self.page.content()
+        except Exception as e:
+            print(f"❌ 页面访问失败: {e}")
+            return False
+
+        data = self.parse_content(html)
+        print(f"标题: {data['title']}")
+        print(f"章节数: {len(data['sections'])}")
+
+        self.save_markdown(project_name, page_id, data, url)
+        self.save_json(project_name, page_id, data, url)
+        print(f"✅ 抓取成功")
+        print("=" * 70)
+        return True
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Zread.ai 文档抓取脚本 (Playwright 版本)")
-    parser.add_argument("url", help="要抓取的 zread.ai 项目 URL")
+    parser.add_argument("url", help="要抓取的 zread.ai 页面或项目 URL")
     parser.add_argument("-o", "--output", type=str, default="archive", help="输出目录")
     parser.add_argument("-d", "--delay", type=float, default=1.0, help="页面请求间隔(秒)")
+    parser.add_argument("--single", action="store_true", help="仅抓取单个页面（默认自动检测）")
+    parser.add_argument("--project", action="store_true", help="抓取整个项目（默认自动检测）")
     args = parser.parse_args()
 
     with ZreadPlaywrightScraper(output_dir=args.output, headless=True) as scraper:
-        scraper.scrape_project(args.url, delay=args.delay)
+        # 自动检测：URL 包含 /\d+- 时认为是单页，否则是项目
+        is_single_page = bool(re.search(r"/\d+-[^/]+$", args.url.rstrip("/")))
+        
+        if args.single or is_single_page:
+            scraper.scrape_single(args.url)
+        else:
+            scraper.scrape_project(args.url, delay=args.delay)
 
 
 if __name__ == "__main__":
